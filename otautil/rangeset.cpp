@@ -148,8 +148,8 @@ std::string RangeSet::ToString() const {
     return "";
   }
   std::string result = std::to_string(ranges_.size() * 2);
-  for (const auto& r : ranges_) {
-    result += android::base::StringPrintf(",%zu,%zu", r.first, r.second);
+  for (const auto& [begin, end] : ranges_) {
+    result += android::base::StringPrintf(",%zu,%zu", begin, end);
   }
 
   return result;
@@ -159,11 +159,11 @@ std::string RangeSet::ToString() const {
 size_t RangeSet::GetBlockNumber(size_t idx) const {
   CHECK_LT(idx, blocks_) << "Out of bound index " << idx << " (total blocks: " << blocks_ << ")";
 
-  for (const auto& range : ranges_) {
-    if (idx < range.second - range.first) {
-      return range.first + idx;
+  for (const auto& [begin, end] : ranges_) {
+    if (idx < end - begin) {
+      return begin + idx;
     }
-    idx -= (range.second - range.first);
+    idx -= (end - begin);
   }
 
   CHECK(false) << "Failed to find block number for index " << idx;
@@ -173,19 +173,67 @@ size_t RangeSet::GetBlockNumber(size_t idx) const {
 // RangeSet has half-closed half-open bounds. For example, "3,5" contains blocks 3 and 4. So "3,5"
 // and "5,7" are not overlapped.
 bool RangeSet::Overlaps(const RangeSet& other) const {
-  for (const auto& range : ranges_) {
-    size_t start = range.first;
-    size_t end = range.second;
-    for (const auto& other_range : other.ranges_) {
-      size_t other_start = other_range.first;
-      size_t other_end = other_range.second;
-      // [start, end) vs [other_start, other_end)
-      if (!(other_start >= end || start >= other_end)) {
+  for (const auto& [begin, end] : ranges_) {
+    for (const auto& [other_begin, other_end] : other.ranges_) {
+      // [begin, end) vs [other_begin, other_end)
+      if (!(other_begin >= end || begin >= other_end)) {
         return true;
       }
     }
   }
   return false;
+}
+
+std::optional<RangeSet> RangeSet::GetSubRanges(size_t start_index, size_t num_of_blocks) const {
+  size_t end_index = start_index + num_of_blocks;  // The index of final block to read plus one
+  if (start_index > end_index || end_index > blocks_) {
+    LOG(ERROR) << "Failed to get the sub ranges for start_index " << start_index
+               << " num_of_blocks " << num_of_blocks
+               << " total number of blocks the range contains is " << blocks_;
+    return std::nullopt;
+  }
+
+  if (num_of_blocks == 0) {
+    LOG(WARNING) << "num_of_blocks is zero when calling GetSubRanges()";
+    return RangeSet();
+  }
+
+  RangeSet result;
+  size_t current_index = 0;
+  for (const auto& [range_start, range_end] : ranges_) {
+    CHECK_LT(range_start, range_end);
+    size_t blocks_in_range = range_end - range_start;
+    // Linear search to skip the ranges until we reach start_block.
+    if (current_index + blocks_in_range <= start_index) {
+      current_index += blocks_in_range;
+      continue;
+    }
+
+    size_t trimmed_range_start = range_start;
+    // We have found the first block range to read, trim the heading blocks.
+    if (current_index < start_index) {
+      trimmed_range_start += start_index - current_index;
+    }
+    // Trim the trailing blocks if the last range has more blocks than desired; also return the
+    // result.
+    if (current_index + blocks_in_range >= end_index) {
+      size_t trimmed_range_end = range_end - (current_index + blocks_in_range - end_index);
+      if (!result.PushBack({ trimmed_range_start, trimmed_range_end })) {
+        return std::nullopt;
+      }
+
+      return result;
+    }
+
+    if (!result.PushBack({ trimmed_range_start, range_end })) {
+      return std::nullopt;
+    }
+    current_index += blocks_in_range;
+  }
+
+  LOG(ERROR) << "Failed to construct byte ranges to read, start_block: " << start_index
+             << ", num_of_blocks: " << num_of_blocks << " total number of blocks: " << blocks_;
+  return std::nullopt;
 }
 
 // Ranges in the the set should be mutually exclusive; and they're sorted by the start block.
@@ -248,20 +296,20 @@ bool SortedRangeSet::Overlaps(size_t start, size_t len) const {
 size_t SortedRangeSet::GetOffsetInRangeSet(size_t old_offset) const {
   size_t old_block_start = old_offset / kBlockSize;
   size_t new_block_start = 0;
-  for (const auto& range : ranges_) {
+  for (const auto& [start, end] : ranges_) {
     // Find the index of old_block_start.
-    if (old_block_start >= range.second) {
-      new_block_start += (range.second - range.first);
-    } else if (old_block_start >= range.first) {
-      new_block_start += (old_block_start - range.first);
+    if (old_block_start >= end) {
+      new_block_start += (end - start);
+    } else if (old_block_start >= start) {
+      new_block_start += (old_block_start - start);
       return (new_block_start * kBlockSize + old_offset % kBlockSize);
     } else {
       CHECK(false) << "block_start " << old_block_start
-                   << " is missing between two ranges: " << this->ToString();
+                   << " is missing between two ranges: " << ToString();
       return 0;
     }
   }
   CHECK(false) << "block_start " << old_block_start
-               << " exceeds the limit of current RangeSet: " << this->ToString();
+               << " exceeds the limit of current RangeSet: " << ToString();
   return 0;
 }

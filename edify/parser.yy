@@ -72,7 +72,7 @@ static Expr* Build(Function fn, YYLTYPE loc, size_t count, ...) {
 
 %parse-param {std::unique_ptr<Expr>* root}
 %parse-param {int* error_count}
-%error-verbose
+%define parse.error verbose
 
 /* declarations in increasing order of precedence */
 %left ';'
@@ -138,7 +138,7 @@ void yyerror(std::unique_ptr<Expr>* root, int* error_count, const char* s) {
   ++*error_count;
 }
 
-int parse_string(const char* str, std::unique_ptr<Expr>* root, int* error_count) {
-    yy_switch_to_buffer(yy_scan_string(str));
-    return yyparse(root, error_count);
+int ParseString(const std::string& str, std::unique_ptr<Expr>* root, int* error_count) {
+  yy_switch_to_buffer(yy_scan_string(str.c_str()));
+  return yyparse(root, error_count);
 }

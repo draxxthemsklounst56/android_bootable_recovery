@@ -41,13 +41,14 @@
 #include <android-base/logging.h>
 #include <private/android_logger.h> /* private pmsg functions */
 
-#include "rotate_logs.h"
+#include "recovery_utils/logging.h"
+#include "recovery_utils/parse_install_logs.h"
 
-static const char *LAST_LOG_FILE = "/data/misc/recovery/last_log";
-static const char *LAST_PMSG_FILE = "/sys/fs/pstore/pmsg-ramoops-0";
-static const char *LAST_KMSG_FILE = "/data/misc/recovery/last_kmsg";
-static const char *LAST_CONSOLE_FILE = "/sys/fs/pstore/console-ramoops-0";
-static const char *ALT_LAST_CONSOLE_FILE = "/sys/fs/pstore/console-ramoops";
+constexpr const char* LAST_LOG_FILE = "/data/misc/recovery/last_log";
+constexpr const char* LAST_PMSG_FILE = "/sys/fs/pstore/pmsg-ramoops-0";
+constexpr const char* LAST_KMSG_FILE = "/data/misc/recovery/last_kmsg";
+constexpr const char* LAST_CONSOLE_FILE = "/sys/fs/pstore/console-ramoops-0";
+constexpr const char* ALT_LAST_CONSOLE_FILE = "/sys/fs/pstore/console-ramoops";
 
 // close a file, log an error if the error indicator is set
 static void check_and_fclose(FILE *fp, const char *name) {
@@ -138,14 +139,17 @@ int main(int argc, char **argv) {
     }
 
     if (has_cache) {
-        /*
-         * TBD: Future location to move content from
-         * /cache/recovery to /data/misc/recovery/
-         */
-        /* if --force-persist flag, then transfer pmsg data anyways */
-        if ((argc <= 1) || !argv[1] || strcmp(argv[1], "--force-persist")) {
-            return 0;
-        }
+      // Collects and reports the non-a/b update metrics from last_install; and removes the file
+      // to avoid duplicate report.
+      if (access(LAST_INSTALL_FILE_IN_CACHE, F_OK) && unlink(LAST_INSTALL_FILE_IN_CACHE) == -1) {
+        PLOG(ERROR) << "Failed to unlink " << LAST_INSTALL_FILE_IN_CACHE;
+      }
+
+      // TBD: Future location to move content from /cache/recovery to /data/misc/recovery/
+      // if --force-persist flag, then transfer pmsg data anyways
+      if ((argc <= 1) || !argv[1] || strcmp(argv[1], "--force-persist")) {
+        return 0;
+      }
     }
 
     /* Is there something in pmsg? */
@@ -156,6 +160,14 @@ int main(int argc, char **argv) {
     // Take last pmsg file contents and send it off to the logsave
     __android_log_pmsg_file_read(
         LOG_ID_SYSTEM, ANDROID_LOG_INFO, "recovery/", logsave, NULL);
+
+    // For those device without /cache, the last_install file has been copied to
+    // /data/misc/recovery from pmsg. Looks for the sideload history only.
+    if (!has_cache) {
+      if (access(LAST_INSTALL_FILE, F_OK) && unlink(LAST_INSTALL_FILE) == -1) {
+        PLOG(ERROR) << "Failed to unlink " << LAST_INSTALL_FILE;
+      }
+    }
 
     /* Is there a last console log too? */
     if (rotated) {

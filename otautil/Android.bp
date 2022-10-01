@@ -16,26 +16,25 @@ cc_library_static {
     name: "libotautil",
 
     host_supported: true,
+    vendor_available: true,
+    recovery_available: true,
 
+    defaults: [
+        "recovery_defaults",
+    ],
+
+    // Minimal set of files to support host build.
     srcs: [
-        "SysUtil.cpp",
-        "DirUtil.cpp",
-        "ZipUtil.cpp",
-        "ThermalUtil.cpp",
-        "cache_location.cpp",
+        "dirutil.cpp",
+        "paths.cpp",
         "rangeset.cpp",
+        "sysutil.cpp",
     ],
 
-    static_libs: [
-        "libselinux",
+    shared_libs: [
         "libbase",
-        "libziparchive",
-    ],
-
-    cflags: [
-        "-D_FILE_OFFSET_BITS=64",
-        "-Werror",
-        "-Wall",
+        "libcutils",
+        "libselinux",
     ],
 
     export_include_dirs: [
